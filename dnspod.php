@@ -444,7 +444,7 @@ class DnsPod {
          if($record->status != "enable")
             $this->api("/records/" . $this->domain . "/" . $record->id, array(
                CURLOPT_CUSTOMREQUEST => "PUT",
-               CURLOPT_POSTFIELDS => $enabled,
+               CURLOPT_POSTFIELDS => $enabler,
                CURLOPT_HTTPHEADER => array(
                   "Content-Type" => "application/json",
                   "Content-Length" => strlen($enabler)
