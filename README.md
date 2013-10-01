@@ -106,13 +106,17 @@ When executed from command line, messages are sent to _stderr_ and a code is ret
 
 1. First, log in to your NAS with SSH as root.
 2. Grab the script, add the shebang line and make it executable:
+
         $ wget -nv --no-check-certificate https://github.com/lapause/dnspod-client/raw/master/dnspod.php
         $ echo '#!/usr/bin/env php' | cat - dnspod.php > /sbin/dnspod
         $ chmod +x /sbin/dnspod
         $ rm dnspod.php
+
 3. Update the entry for DnsPod in the DDNS configuration files:
+
         $ sed -i -re '/\[DNSPod\.com\]/{n;s@modulepath=.+@modulepath=/sbin/dnspod@}' /etc.defaults/ddns_provider.conf
         $ sed -i -re '/\[DNSPod\.com\]/{n;s@modulepath=.+@modulepath=/sbin/dnspod@}' /etc/ddns_provider.conf
+
 4. You should be good to go. Connect to your NAS web interface, and go to **Control Panel > Network services > DDNS**, then enter your settings and test the connection.
 
 ## License
