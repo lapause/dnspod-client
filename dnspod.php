@@ -120,7 +120,7 @@ class DnsPod {
     * @access private
     * @var string
     */
-   private static $grabber_url = "http://icanhazip.com";
+   private static $grabber_url = "http://icanhazip.com/s";
 
    /**
     * Success return statuses.
