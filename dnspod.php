@@ -15,14 +15,14 @@ use \Exception, \ErrorException, \ReflectionClass;
  *
  * Usage
  * -----
- * • From PHP:
+ * - From PHP:
  *      - Include the script, directly or by binding DnsPod namespace to it via your favorite autoloader
  *      - Invoke the built-in static update method
  *
  *      include("dnspod.php");
  *      DnsPod\DnsPod::update("foo@bar.com", "mypassword", "foo.bar.com");
  *
- * • From command line:
+ * - From command line:
  *      - If you want to invoke the script directly, give it executable rights and add the following shebang on the very
  *        first line of the file, moving the PHP opening tag to line 2:
  *        #!/usr/bin/env php
@@ -105,7 +105,7 @@ class DnsPod {
    private $ip;
 
    /**
-    * Authentication cookie.
+    * Authentication token.
     *
     * @access private
     * @var string
@@ -143,7 +143,8 @@ class DnsPod {
       CURLOPT_SSL_VERIFYPEER => 0,
       CURLOPT_TIMEOUT => 10,
       CURLOPT_FOLLOWLOCATION => true,
-      CURLOPT_HEADER => true
+      CURLOPT_HEADER => true,
+      CURLOPT_USERAGENT => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:30.0) Gecko/20100101 Firefox/30.0"
    );
 
    /**
@@ -186,7 +187,7 @@ class DnsPod {
    /**
     * URL of DnsPod API.
     */
-   const URL_DNSPOD_API = "https://www.dnspod.com/api";
+   const URL_DNSPOD_API = "https://api.dnspod.com";
 
    /**
     * FQDN regexp, based on RCF 952 <http://tools.ietf.org/html/rfc952>.
@@ -252,12 +253,12 @@ class DnsPod {
     * Display a message if executed in CLI environment, and throw an exception if an error code was passed.
     *
     * @static
-    * @access private
+    * @access public
     * @param  string  $message Message to display
     * @param  string  $code    String code to return
     * @return void
     */
-   private static function message($message = null, $code = null) {
+   public static function message($message = null, $code = null) {
       if(!$message && !$code)
          return;
 
@@ -294,12 +295,20 @@ class DnsPod {
     * @static
     * @access private
     * @param  string  $url     URL to which send the request
+    * @param  array   $data    POST data
     * @param  array   $options cURL options
     * @return object
     */
-   private static function request($url, array $options = array()) {
+   private static function request($url, array $data = array(), array $options = array()) {
       // Request preparation, execution, and info grabbing
-      $options = static::$DEFAULT_CURL_OPTIONS + $options + array(CURLOPT_URL => $url);
+      $data = http_build_query($data);
+      $options = static::$DEFAULT_CURL_OPTIONS + $options + array(
+         CURLOPT_URL => $url
+      );
+      if(!empty($data))
+         $options += array(
+            CURLOPT_POSTFIELDS => $data
+         );
       if(static::$debug)
          $options += array(CURLINFO_HEADER_OUT => true);
       $ch = curl_init();
@@ -314,7 +323,7 @@ class DnsPod {
       // Debug information
       if(static::$debug) {
          $s = str_repeat("=", 80) . "\n" . $url . "\n" . str_repeat("=", 80) . "\n";
-         $s .= str_repeat("-", 80) . "\nRequest\n" . str_repeat("-", 80) . "\n" . $request . "\n";
+         $s .= str_repeat("-", 80) . "\nRequest\n" . str_repeat("-", 80) . "\n" . $request . ($data ? $data . "\n\n" : "");
          $s .= str_repeat("-", 80) . "\nResponse\n" . str_repeat("-", 80) . "\n" . $response . "\n";
          echo CLI ? $s : "<pre>" . $s . "</pre>";
       }
@@ -339,10 +348,6 @@ class DnsPod {
       $response = explode("\r\n\r\n", $response);
       $headers = array_shift($response);
       $response = trim(implode("\r\n", $response));
-      if(count(array_filter(explode("\r\n", $headers), function($v) {
-         return stripos($v, "Content-Type:") === 0 && stripos($v, "application/json");
-      })))
-         $response = json_decode($response);
       return (object) compact("response", "error");
    }
 
@@ -353,37 +358,45 @@ class DnsPod {
     * @return void
     */
    private function authenticate() {
-      $credentials = http_build_query(array("email" => $this->username, "password" => $this->password));
-      $res = static::request(static::URL_DNSPOD_API . "/auth?" . $credentials);
-      if($res->error)
-         static::message(null, $res->error);
-      elseif(property_exists($res->response, "error") || !property_exists($res->response, "mario"))
-         static::message(null, static::RETURN_AUTHENTICATION_FAILED);
-      else $this->auth = "mario=" . $res->response->mario;
+      $res = static::api("Auth", array("login_email" => $this->username, "login_password" => $this->password));
+      try {
+         $this->auth = $res->user_token;
+      }
+      catch(Exception $e) {
+         static::message("Unexpected API response");
+      }
    }
 
    /**
     * Send an HTTP request to DnsPod API and return the response.
     *
     * @access private
-    * @param  string $uri         URI to which send the request
-    * @param  array  $options     cURL options
-    * @param  bool   $bypassError At True, object will be return with errors.
+    * @param  string $uri     URI to which send the request
+    * @param  array  $data    POST data
+    * @param  array  $options cURL options
     * @return object
     */
-   private function api($uri, array $options = array(), $bypassError = false) {
-      // We need to be authenticated with the API
-      if(!$this->auth)
-         $this->authenticate();
+   private function api($uri, array $data = array(), array $options = array()) {
       if(substr($uri, 0, 1) != "/")
          $uri = "/" . $uri;
-      $options += array(CURLOPT_COOKIE => $this->auth);
-      $res = static::request(static::URL_DNSPOD_API . $uri, $options);
-      if($bypassError)
-         return $res;
-      elseif($res->error)
+      if(!$this->auth && $uri != "/Auth") {
+         $this->authenticate();
+      }
+      if($this->auth)
+         $data += array("user_token" => $this->auth);
+      $data += array("format" => "json");
+      $res = static::request(static::URL_DNSPOD_API . $uri, $data, $options);
+      if($res->error)
          static::message(null, $res->error);
-      else return $res->response;
+      try {
+         $res = json_decode($res->response);
+      }
+      catch(Exception $e) {
+         static::message("Unexpected API response");
+      }
+      if($res->status->code != 1)
+         static::message($res->status->message, $res->status->code);
+      else return $res;
    }
 
    /**
@@ -412,9 +425,13 @@ class DnsPod {
          $this->ip = static::ip();
 
       // We grab current DNS records for domain
-      $res = $this->api("/records/" . $this->domain, array(), true);
-      if($res->error)
+      try {
+         $domain_id = $this->api("Domain.Info", array("domain" => $this->domain))->domain->id;
+      }
+      catch(Exception $e) {
          static::message(null, static::RETURN_NO_HOST);
+      }
+      $records = $this->api("Record.List", compact("domain_id") + array("sub_domain" => $this->sub_domain))->records;
 
       // We handle update
       $data = json_encode(array(
@@ -426,38 +443,23 @@ class DnsPod {
          "ttl" => (string) $this->ttl
       ));
       $enabler = json_encode(array("status" => "enable"));
-      foreach($res->response as $record) {
-         // We only consider records matching the subdomain, and are only concerned by A and CNAME records
-         if($record->sub_domain != $this->sub_domain || !in_array($record->record_type, array("A", "CNAME")))
-            continue;
-
-         // We remove records matching the subdomain but of CNAME type or in a custom area
-         if($record->record_type == "CNAME" || $record->area != "default") {
-            $this->api("/records/" . $this->domain . "/" . $record->id, array(
-               CURLOPT_CUSTOMREQUEST => "DELETE"
-            ));
+      foreach($records as $record) {
+         // We remove records matching the subdomain but of CNAME type or in a custom line
+         if($record->type == "CNAME" || $record->line != "Default") {
+            $this->api("Record.Remove", compact("domain_id") + array("record_id" => $record->id));
             continue;
          }
-         $found = true;
 
-         // We update the record if it is disabled and/or if IP has changed
-         if($record->status != "enable")
-            $this->api("/records/" . $this->domain . "/" . $record->id, array(
-               CURLOPT_CUSTOMREQUEST => "PUT",
-               CURLOPT_POSTFIELDS => $enabler,
-               CURLOPT_HTTPHEADER => array(
-                  "Content-Type" => "application/json",
-                  "Content-Length" => strlen($enabler)
-               )
-            ));
+         // Otherwise we update the record if needed
+         $found = true;
          if($record->value != $this->ip) {
-            $this->api("/records/" . $this->domain . "/" . $record->id, array(
-               CURLOPT_CUSTOMREQUEST => "PUT",
-               CURLOPT_POSTFIELDS => $data,
-               CURLOPT_HTTPHEADER => array(
-                  "Content-Type" => "application/json",
-                  "Content-Length" => strlen($data)
-               )
+            $this->api("Record.Modify", compact("domain_id") + array(
+               "record_id" => $record->id,
+               "sub_domain" => $this->sub_domain,
+               "record_type" => "A",
+               "record_line" => "default",
+               "value" => $this->ip,
+               "ttl" => $this->ttl
             ));
             static::message(null, static::RETURN_UPDATE_SUCCESSFUL);
          }
@@ -466,13 +468,12 @@ class DnsPod {
 
       // We create it if it does not exist
       if(empty($found)) {
-         $this->api("/records/" . $this->domain, array(
-            CURLOPT_CUSTOMREQUEST => "POST",
-            CURLOPT_POSTFIELDS => $data,
-            CURLOPT_HTTPHEADER => array(
-               "Content-Type" => "application/json",
-               "Content-Length" => strlen($data)
-            )
+         $this->api("Record.Create" . compact("domain_id") + array(
+            "sub_domain" => $this->sub_domain,
+            "record_type" => "A",
+            "record_line" => "default",
+            "value" => $this->ip,
+            "ttl" => $this->ttl
          ));
          static::message(null, static::RETURN_UPDATE_SUCCESSFUL);
       }
@@ -507,11 +508,12 @@ if(CLI) {
    // Synology DSM passes all 4 arguments in a single parameter, separated by spaces
    if($argc == 2)
       $args = explode(" ", $argv[1]);
+
    // Standard parameters
    else $args = array_splice($argv, 1);
-   if(count($args) < 3 || count($args) > 5) {
-      echo "Usage: php " . $_SERVER['SCRIPT_NAME'] . " USERNAME PASSWORD HOSTNAME [IP] [IP_GRABBER_URL]\n";
+   if(count($args) < 3 || count($args) > 4) {
+      echo "Usage: php " . $_SERVER['SCRIPT_NAME'] . " USERNAME PASSWORD HOSTNAME [IP]\n";
       exit(1);
    }
-   DnsPod::update($args[0], $args[1], $args[2], count($args) >= 4 ? $args[3] : null, count($args) == 5 ? $args[4] : null);
+   DnsPod::update($args[0], $args[1], $args[2], count($args) == 4 ? $args[3] : null);
 }

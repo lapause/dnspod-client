@@ -27,7 +27,6 @@ The client requires PHP 5 (regular and CLI version if you want to use it from co
 - **password** : Your DnsPod password
 - **hostname** : The FQDN you want to update (e.g. foo.com or foo.bar.com)
 - [ _ip_ ] : The IP address you want to assign to DNS record. If left empty, it will be grabbed automatically
-- [ _grabber\_url_ ] : URL of a page returning the IP address of the sender. Used if no IP is provided. By default, client will connect to [http://icanhazip.com](http://icanhazip.com)
 
 ```bash
 $ php dnspod.php foo@bar.com mypassword foo.bar.com
